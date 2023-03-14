@@ -1,10 +1,10 @@
-package main
+package file
 
 import (
 	"os"
 )
 
-func checkFileExist(filePath string) bool {
+func CheckFileExist(filePath string) bool {
 	_, err := os.Stat(filePath)
 	if os.IsNotExist(err) {
 		return false

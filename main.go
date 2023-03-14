@@ -15,7 +15,10 @@ import (
 	"os/exec"
 
 	"github.com/cheggaaa/pb/v3"
+	"github.com/sofuetakuma112/udmey-caps-translater/file"
+	"github.com/sofuetakuma112/udmey-caps-translater/firebase"
 	"github.com/sofuetakuma112/udmey-caps-translater/translate"
+	"github.com/sofuetakuma112/udmey-caps-translater/types"
 )
 
 type Caption struct {
@@ -35,20 +38,12 @@ type WordDict []*WordWithTimeStamp
 
 type WordGroup []WordDict
 
-type Sentence struct {
-	From     string `json:"from"`
-	To       string `json:"to"`
-	Sentence string `json:"sentence"`
-}
-
-type Sentences []Sentence
-
 // 抽出した字幕データを整形する
 func formatCaptions(outputDirPath string, rawCaptions Captions) (Captions, error) {
 	var formattedCaps Captions
 
 	path := outputDirPath + "/formattedCaptions.json"
-	if checkFileExist(path) {
+	if file.CheckFileExist(path) {
 		readBytes, err := ioutil.ReadFile(path)
 		if err != nil {
 			panic(err)
@@ -127,7 +122,7 @@ func createDict(outputDirPath string, captions Captions) WordDict {
 	var dict WordDict
 	path := outputDirPath + "/dict.json"
 
-	if checkFileExist(path) {
+	if file.CheckFileExist(path) {
 		readBytes, err := ioutil.ReadFile(path)
 		if err != nil {
 			panic(err)
@@ -165,13 +160,13 @@ func createDict(outputDirPath string, captions Captions) WordDict {
 	return dict
 }
 
-func groupBySentence(outputDirPath string, puncRestoredText string, dict WordDict) Sentences {
+func groupBySentence(outputDirPath string, puncRestoredText string, dict WordDict) types.Sentences {
 	var wordsBySentence WordDict
-	var sentences Sentences
+	var sentences types.Sentences
 
 	path := outputDirPath + "/captions_en_by_sentence.json"
 
-	if checkFileExist(path) {
+	if file.CheckFileExist(path) {
 		readBytes, err := ioutil.ReadFile(path)
 		if err != nil {
 			panic(err)
@@ -214,7 +209,7 @@ func groupBySentence(outputDirPath string, puncRestoredText string, dict WordDic
 				for _, w := range wordsBySentence {
 					words = append(words, w.Word)
 				}
-				sentence := Sentence{
+				sentence := types.Sentence{
 					From:     ms2likeISOFormat(int(wordsBySentence[0].Timestamp * 1000))[3:],
 					To:       ms2likeISOFormat(int(wordsBySentence[len(wordsBySentence)-1].Timestamp * 1000))[3:],
 					Sentence: unescapeDot(strings.Join(words, " ")),
@@ -241,14 +236,14 @@ func groupBySentence(outputDirPath string, puncRestoredText string, dict WordDic
 	return sentences
 }
 
-func translateSentences(outputDirPath string, sentences Sentences, apiUrlFormat string) Sentences {
-	var jpSentences Sentences
+func translateSentences(outputDirPath string, sentences types.Sentences, apiUrlFormat string) types.Sentences {
+	var jpSentences types.Sentences
 
 	path := outputDirPath + "/captions_ja_by_sentence.json"
 	tmpPath := outputDirPath + "/captions_ja_by_sentence_tmp.json"
 
 	// 翻訳済みならそのファイルをreadして返す
-	if checkFileExist(path) {
+	if file.CheckFileExist(path) {
 		readBytes, err := ioutil.ReadFile(path)
 		if err != nil {
 			panic(err)
@@ -261,9 +256,9 @@ func translateSentences(outputDirPath string, sentences Sentences, apiUrlFormat 
 	fmt.Println("翻訳途中なら一時保存ファイルをreadする")
 
 	// 翻訳途中なら一時保存ファイルをreadする
-	jpSentences = make(Sentences, len(sentences))
+	jpSentences = make(types.Sentences, len(sentences))
 	translatedSentenceIdxes := []int{}
-	if checkFileExist(tmpPath) {
+	if file.CheckFileExist(tmpPath) {
 		readBytes, err := ioutil.ReadFile(tmpPath)
 		if err != nil {
 			panic(err)
@@ -272,7 +267,7 @@ func translateSentences(outputDirPath string, sentences Sentences, apiUrlFormat 
 		json.Unmarshal(readBytes, &jpSentences)
 
 		for i, tjs := range jpSentences {
-			notSame := tjs != Sentence{}
+			notSame := tjs != types.Sentence{}
 			if notSame { // 初期値と一致しない
 				// 和訳済みのSentenceのidxを集める
 				translatedSentenceIdxes = append(translatedSentenceIdxes, i)
@@ -305,7 +300,7 @@ func translateSentences(outputDirPath string, sentences Sentences, apiUrlFormat 
 
 		semaphore <- struct{}{}
 		wg.Add(1)
-		go func(i int, s Sentence) {
+		go func(i int, s types.Sentence) {
 			defer func() {
 				<-semaphore
 				// innerBar.Increment()
@@ -322,7 +317,7 @@ func translateSentences(outputDirPath string, sentences Sentences, apiUrlFormat 
 				log.Fatal(fmt.Errorf("failed with %q: %w", outputDirPath, err))
 			}
 
-			jpSentence := Sentence{
+			jpSentence := types.Sentence{
 				Sentence: translatedText.Text,
 				From:     s.From,
 				To:       s.To,
@@ -341,11 +336,11 @@ func translateSentences(outputDirPath string, sentences Sentences, apiUrlFormat 
 	return jpSentences
 }
 
-func createSrt(outputDirPath string, jpSentences Sentences) {
+func createSrt(outputDirPath string, jpSentences types.Sentences) {
 	srt := ""
 
 	path := outputDirPath + "/captions_ja.srt"
-	if checkFileExist(path) {
+	if file.CheckFileExist(path) {
 		return
 	}
 
@@ -361,7 +356,7 @@ func createSrt(outputDirPath string, jpSentences Sentences) {
 
 func repunc(outputDirPath string, courceId, lectureId string) string {
 	puncRestoredTextFilePath := outputDirPath + "/" + restoredPuncTxtName
-	if !checkFileExist(puncRestoredTextFilePath) {
+	if !file.CheckFileExist(puncRestoredTextFilePath) {
 		err := exec.Command("python3", "repunc_by_nemo.py", courceId, lectureId, escapedPuncTxtName, restoredPuncTxtName).Run()
 		if err != nil {
 			log.Fatal(err)
@@ -403,7 +398,9 @@ func main() {
 
 	type TextOutput struct {
 		path      string
-		sentences Sentences
+		courceId  string
+		lectureId string
+		sentences types.Sentences
 	}
 
 	textOutputs := []*TextOutput{}
@@ -475,6 +472,8 @@ func main() {
 
 		textOutputs = append(textOutputs, &TextOutput{
 			path:      outputDirPath,
+			courceId:  courceId,
+			lectureId: lectureId,
 			sentences: sentences,
 		})
 	}
@@ -494,6 +493,7 @@ func main() {
 	var wg sync.WaitGroup
 
 	for _, to := range textOutputs {
+		to := to
 		outputDirPath := to.path
 		sentences := to.sentences
 		wg.Add(1)
@@ -517,6 +517,11 @@ func main() {
 			}()
 			jpSentences := translateSentences(outputDirPath, sentences, url)
 			createSrt(outputDirPath, jpSentences)
+
+			err := firebase.UploadJson(jpSentences, to.courceId, to.lectureId)
+			if err != nil {
+				log.Fatal(err)
+			}
 		}()
 	}
 
